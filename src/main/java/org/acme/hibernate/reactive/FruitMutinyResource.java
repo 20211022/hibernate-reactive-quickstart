@@ -63,4 +63,81 @@ public class FruitMutinyResource {
         return sf.withTransaction((s,t) -> s.persist(fruit))
                 .replaceWith(() -> Response.ok(fruit).status(CREATED).build());
     }
+
+    @PUT
+    @Path("{id}")
+    public Uni<Response> update(@RestPath Integer id, Fruit fruit) {
+        if (fruit == null || fruit.getName() == null) {
+            throw new WebApplicationException("Fruit name was not set on request.", 422);
+        }
+
+        return sf.withTransaction((s,t) -> s.find(Fruit.class, id)
+            // If entity exists then update it
+            .onItem().ifNotNull().invoke(entity -> entity.setName(fruit.getName()))
+            .onItem().ifNotNull().transform(entity -> Response.ok(entity).build())
+            // If entity not found return the appropriate response
+            .onItem().ifNull()
+            .continueWith(() -> Response.ok().status(NOT_FOUND).build() )
+        );
+    }
+
+    @DELETE
+    @Path("{id}")
+    public Uni<Response> delete(@RestPath Integer id) {
+        return sf.withTransaction((s,t) ->
+                s.find(Fruit.class, id)
+                    // If entity exists then delete it
+                    .onItem().ifNotNull()
+                        .transformToUni(entity -> s.remove(entity)
+                                .replaceWith(() -> Response.ok().status(NO_CONTENT).build()))
+                // If entity not found return the appropriate response
+                .onItem().ifNull().continueWith(() -> Response.ok().status(NOT_FOUND).build()));
+    }
+
+    /**
+     * Create a HTTP response from an exception.
+     *
+     * Response Example:
+     *
+     * <pre>
+     * HTTP/1.1 422 Unprocessable Entity
+     * Content-Length: 111
+     * Content-Type: application/json
+     *
+     * {
+     *     "code": 422,
+     *     "error": "Fruit name was not set on request.",
+     *     "exceptionType": "javax.ws.rs.WebApplicationException"
+     * }
+     * </pre>
+     */
+    @Provider
+    public static class ErrorMapper implements ExceptionMapper<Exception> {
+
+        @Inject
+        ObjectMapper objectMapper;
+
+        @Override
+        public Response toResponse(Exception exception) {
+            LOGGER.error("Failed to handle request", exception);
+
+            int code = 500;
+            if (exception instanceof WebApplicationException) {
+                code = ((WebApplicationException) exception).getResponse().getStatus();
+            }
+
+            ObjectNode exceptionJson = objectMapper.createObjectNode();
+            exceptionJson.put("exceptionType", exception.getClass().getName());
+            exceptionJson.put("code", code);
+
+            if (exception.getMessage() != null) {
+                exceptionJson.put("error", exception.getMessage());
+            }
+
+            return Response.status(code)
+                    .entity(exceptionJson)
+                    .build();
+        }
+
+    }
 }
